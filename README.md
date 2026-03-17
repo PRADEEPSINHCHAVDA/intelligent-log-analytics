@@ -160,25 +160,3 @@ python3 scripts/cost-analysis.py
   TOTAL                            $450.00    $67.00   $383.00
                                                73% reduction
 ```
-
-## Interview Questions
-
-See [docs/setup-guide.md](docs/setup-guide.md#interview-preparation) for answers to:
-- Why Kafka instead of SQS/Kinesis?
-- How does correlation ID tracking work?
-- What happens during a Spot interruption?
-- How is hot/warm/cold implemented in OpenSearch?
-- How do you measure the 52% troubleshooting time reduction?
-
-## Resume Bullets (copy after running the system)
-
-```
-• Architected serverless log pipeline processing 2GB+ daily logs via
-  Kafka → Lambda → OpenSearch with correlation ID tracking, reducing
-  incident troubleshooting time by 52% across 8 microservices
-
-• Optimized costs using EC2 Spot Instances with Fleet diversification
-  (3 instance types across 2 AZs), automated Spot interruption handling,
-  and OpenSearch tiered retention (7d/30d/90d), cutting spend 73%
-  ($450 → $120/month) with 99.5% uptime
-```
