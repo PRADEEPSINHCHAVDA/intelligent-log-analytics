@@ -1,0 +1,65 @@
+{
+  "index_patterns": ["logs-*"],
+  "template": {
+    "settings": {
+      "number_of_shards": 2,
+      "number_of_replicas": 1,
+      "refresh_interval": "30s",
+      "index.codec": "best_compression"
+    },
+    "mappings": {
+      "dynamic_templates": [
+        {
+          "strings_as_keywords": {
+            "match_mapping_type": "string",
+            "match": "*_id",
+            "mapping": { "type": "keyword" }
+          }
+        },
+        {
+          "message_text": {
+            "match": "message",
+            "mapping": {
+              "type": "text",
+              "fields": { "keyword": { "type": "keyword", "ignore_above": 512 } }
+            }
+          }
+        }
+      ],
+      "properties": {
+        "@timestamp":      { "type": "date" },
+        "timestamp":       { "type": "date" },
+        "_ingested_at":    { "type": "date" },
+        "correlation_id":  { "type": "keyword" },
+        "trace_id":        { "type": "keyword" },
+        "span_id":         { "type": "keyword" },
+        "service":         { "type": "keyword" },
+        "version":         { "type": "keyword" },
+        "environment":     { "type": "keyword" },
+        "region":          { "type": "keyword" },
+        "level":           { "type": "keyword" },
+        "level_numeric":   { "type": "integer" },
+        "message":         {
+          "type": "text",
+          "fields": { "keyword": { "type": "keyword", "ignore_above": 512 } }
+        },
+        "user_id":         { "type": "keyword" },
+        "session_id":      { "type": "keyword" },
+        "request_id":      { "type": "keyword" },
+        "http_method":     { "type": "keyword" },
+        "http_path":       { "type": "keyword" },
+        "http_status_class": { "type": "keyword" },
+        "status_code":     { "type": "integer" },
+        "duration_ms":     { "type": "float" },
+        "latency_bucket":  { "type": "keyword" },
+        "error":           { "type": "text", "fields": { "keyword": { "type": "keyword", "ignore_above": 1024 } } },
+        "error_category":  { "type": "keyword" },
+        "requires_alert":  { "type": "boolean" },
+        "is_error":        { "type": "boolean" },
+        "ip_address":      { "type": "ip" },
+        "_pipeline_version": { "type": "keyword" }
+      }
+    }
+  },
+  "priority": 100
+}

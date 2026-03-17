@@ -1,0 +1,170 @@
+{
+  "_meta": {
+    "title": "Log Analytics Platform - Kibana Dashboards",
+    "description": "Import this file at: Dashboards → Management → Saved Objects → Import",
+    "version": "1.0.0"
+  },
+  "objects": [
+    {
+      "id": "logs-index-pattern",
+      "type": "index-pattern",
+      "attributes": {
+        "title": "logs-*",
+        "timeFieldName": "@timestamp",
+        "fields": "[]"
+      }
+    },
+    {
+      "id": "dashboard-overview",
+      "type": "dashboard",
+      "attributes": {
+        "title": "Log Analytics - Overview",
+        "description": "Platform-wide log overview: volume, errors, latency, services",
+        "panelsJSON": "[]",
+        "timeRestore": false,
+        "kibanaSavedObjectMeta": {
+          "searchSourceJSON": "{\"query\":{\"query\":\"\",\"language\":\"kuery\"},\"filter\":[]}"
+        }
+      }
+    }
+  ],
+  "opensearch_queries": {
+    "description": "Use these queries in OpenSearch Dashboards Dev Tools or Discover",
+    "queries": {
+      "find_by_correlation_id": {
+        "comment": "Track a request across all 8 services by correlation_id",
+        "query": {
+          "query": {
+            "term": { "correlation_id": "REPLACE_WITH_CORRELATION_ID" }
+          },
+          "sort": [{ "@timestamp": "asc" }],
+          "size": 100
+        }
+      },
+      "error_rate_by_service": {
+        "comment": "Error count per service (last 1 hour)",
+        "query": {
+          "size": 0,
+          "query": {
+            "bool": {
+              "must": [
+                { "terms": { "level": ["ERROR", "FATAL"] } },
+                { "range": { "@timestamp": { "gte": "now-1h" } } }
+              ]
+            }
+          },
+          "aggs": {
+            "by_service": {
+              "terms": { "field": "service", "size": 20 },
+              "aggs": {
+                "error_count": { "value_count": { "field": "level" } }
+              }
+            }
+          }
+        }
+      },
+      "p50_p95_p99_latency": {
+        "comment": "Latency percentiles by service (last 15 minutes)",
+        "query": {
+          "size": 0,
+          "query": {
+            "range": { "@timestamp": { "gte": "now-15m" } }
+          },
+          "aggs": {
+            "by_service": {
+              "terms": { "field": "service", "size": 20 },
+              "aggs": {
+                "latency_percentiles": {
+                  "percentiles": {
+                    "field": "duration_ms",
+                    "percents": [50, 95, 99]
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "log_volume_over_time": {
+        "comment": "Log volume per minute for all services (last 1 hour)",
+        "query": {
+          "size": 0,
+          "query": {
+            "range": { "@timestamp": { "gte": "now-1h" } }
+          },
+          "aggs": {
+            "over_time": {
+              "date_histogram": {
+                "field": "@timestamp",
+                "calendar_interval": "minute"
+              },
+              "aggs": {
+                "by_service": {
+                  "terms": { "field": "service", "size": 10 }
+                }
+              }
+            }
+          }
+        }
+      },
+      "recent_errors": {
+        "comment": "Last 20 errors with full context",
+        "query": {
+          "query": {
+            "bool": {
+              "must": [
+                { "terms": { "level": ["ERROR", "FATAL"] } },
+                { "range": { "@timestamp": { "gte": "now-1h" } } }
+              ]
+            }
+          },
+          "sort": [{ "@timestamp": "desc" }],
+          "size": 20,
+          "_source": [
+            "@timestamp", "service", "level", "message",
+            "error", "correlation_id", "user_id", "duration_ms"
+          ]
+        }
+      },
+      "slow_requests": {
+        "comment": "Requests taking more than 2 seconds (last hour)",
+        "query": {
+          "query": {
+            "bool": {
+              "must": [
+                { "range": { "duration_ms": { "gte": 2000 } } },
+                { "range": { "@timestamp": { "gte": "now-1h" } } }
+              ]
+            }
+          },
+          "sort": [{ "duration_ms": "desc" }],
+          "size": 50
+        }
+      },
+      "http_status_breakdown": {
+        "comment": "HTTP status code distribution",
+        "query": {
+          "size": 0,
+          "query": {
+            "range": { "@timestamp": { "gte": "now-1h" } }
+          },
+          "aggs": {
+            "status_classes": {
+              "terms": { "field": "http_status_class", "size": 10 }
+            }
+          }
+        }
+      },
+      "index_storage_sizes": {
+        "comment": "How much storage each daily index is using",
+        "url": "GET /logs-*/_stats/store",
+        "note": "Run this in Dev Tools"
+      },
+      "data_ingested_last_24h": {
+        "comment": "Total data ingested in last 24 hours (proves 2GB+ claim)",
+        "url": "GET /logs-*/_stats",
+        "note": "Check store.size_in_bytes and divide by 1024^3 for GB"
+      }
+    }
+  }
+}

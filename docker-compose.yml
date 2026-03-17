@@ -1,0 +1,286 @@
+version: "3.8"
+
+# =============================================================================
+# Log Analytics Platform - Local Development Stack
+# Zero-cost local environment that mirrors production AWS architecture
+# =============================================================================
+# Services:
+#   - Zookeeper (Kafka dependency)
+#   - Kafka (message broker, mirrors EC2 Spot deployment)
+#   - Kafka UI (local Kafka management)
+#   - OpenSearch (mirrors Amazon OpenSearch)
+#   - OpenSearch Dashboards (mirrors Kibana)
+#   - LocalStack (mocks AWS Lambda, CloudWatch, S3, IAM)
+#   - Log Generator (simulates microservices producing logs)
+# =============================================================================
+
+networks:
+  log-analytics:
+    driver: bridge
+
+volumes:
+  opensearch-data:
+  zookeeper-data:
+  kafka-data:
+  localstack-data:
+
+services:
+  # ---------------------------------------------------------------------------
+  # ZOOKEEPER - Kafka dependency
+  # ---------------------------------------------------------------------------
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: zookeeper
+    hostname: zookeeper
+    networks:
+      - log-analytics
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+      ZOOKEEPER_LOG4J_ROOT_LOGLEVEL: WARN
+    volumes:
+      - zookeeper-data:/var/lib/zookeeper
+    healthcheck:
+      test: ["CMD", "bash", "-c", "echo ruok | nc localhost 2181"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ---------------------------------------------------------------------------
+  # KAFKA - Message broker (mirrors EC2 Spot deployment in production)
+  # ---------------------------------------------------------------------------
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: kafka
+    hostname: kafka
+    networks:
+      - log-analytics
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    ports:
+      - "9092:9092"      # External access (host machine)
+      - "9093:9093"      # Internal Docker network
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: EXTERNAL:PLAINTEXT,INTERNAL:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: EXTERNAL://localhost:9092,INTERNAL://kafka:9093
+      KAFKA_LISTENERS: EXTERNAL://0.0.0.0:9092,INTERNAL://0.0.0.0:9093
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_NUM_PARTITIONS: 6
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 1
+      KAFKA_LOG_RETENTION_HOURS: 168       # 7 days (matches hot tier)
+      KAFKA_LOG_SEGMENT_BYTES: 1073741824  # 1GB segments
+      KAFKA_LOG4J_ROOT_LOGLEVEL: WARN
+    volumes:
+      - kafka-data:/var/lib/kafka
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+
+  # ---------------------------------------------------------------------------
+  # KAFKA UI - Local management (use instead of AWS MSK Console)
+  # ---------------------------------------------------------------------------
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: kafka-ui
+    networks:
+      - log-analytics
+    depends_on:
+      kafka:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local-cluster
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9093
+      KAFKA_CLUSTERS_0_ZOOKEEPER: zookeeper:2181
+      DYNAMIC_CONFIG_ENABLED: "true"
+
+  # ---------------------------------------------------------------------------
+  # OPENSEARCH - Mirrors Amazon OpenSearch Service
+  # ---------------------------------------------------------------------------
+  opensearch:
+    image: opensearchproject/opensearch:2.11.0
+    container_name: opensearch
+    hostname: opensearch
+    networks:
+      - log-analytics
+    ports:
+      - "9200:9200"
+      - "9300:9300"
+    environment:
+      - cluster.name=log-analytics-cluster
+      - node.name=opensearch-node1
+      - discovery.type=single-node
+      - bootstrap.memory_lock=true
+      - "OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m"
+      - DISABLE_SECURITY_PLUGIN=true       # Local dev only (prod uses TLS)
+      - DISABLE_INSTALL_DEMO_CONFIG=true
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    volumes:
+      - opensearch-data:/usr/share/opensearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://localhost:9200/_cluster/health | python3 -c \"import sys,json; d=json.load(sys.stdin); sys.exit(0 if d['status'] in ['green','yellow'] else 1)\""]
+      interval: 20s
+      timeout: 10s
+      retries: 10
+
+  # ---------------------------------------------------------------------------
+  # OPENSEARCH DASHBOARDS - Mirrors Kibana on OpenSearch
+  # ---------------------------------------------------------------------------
+  opensearch-dashboards:
+    image: opensearchproject/opensearch-dashboards:2.11.0
+    container_name: opensearch-dashboards
+    networks:
+      - log-analytics
+    depends_on:
+      opensearch:
+        condition: service_healthy
+    ports:
+      - "5601:5601"
+    environment:
+      - OPENSEARCH_HOSTS=["http://opensearch:9200"]
+      - DISABLE_SECURITY_DASHBOARDS_PLUGIN=true
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://localhost:5601/api/status | python3 -c \"import sys,json; d=json.load(sys.stdin); sys.exit(0 if d.get('status',{}).get('overall',{}).get('state') == 'green' else 1)\""]
+      interval: 30s
+      timeout: 15s
+      retries: 10
+
+  # ---------------------------------------------------------------------------
+  # LOCALSTACK - Mocks AWS Lambda, CloudWatch, S3, IAM (zero cost)
+  # ---------------------------------------------------------------------------
+  localstack:
+    image: localstack/localstack:3.0
+    container_name: localstack
+    networks:
+      - log-analytics
+    ports:
+      - "4566:4566"       # Main LocalStack port
+      - "4571:4571"       # Legacy port
+    environment:
+      - SERVICES=lambda,cloudwatch,s3,iam,logs,events,sqs
+      - DEBUG=0
+      - LAMBDA_EXECUTOR=docker
+      - DOCKER_HOST=unix:///var/run/docker.sock
+      - DATA_DIR=/var/lib/localstack/data
+      - PERSISTENCE=1
+      - AWS_DEFAULT_REGION=us-east-1
+    volumes:
+      - localstack-data:/var/lib/localstack
+      - /var/run/docker.sock:/var/run/docker.sock
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://localhost:4566/_localstack/health | python3 -c \"import sys,json; d=json.load(sys.stdin); sys.exit(0 if d.get('services',{}).get('lambda') == 'running' else 1)\""]
+      interval: 20s
+      timeout: 10s
+      retries: 10
+
+  # ---------------------------------------------------------------------------
+  # LOG PROCESSOR - Python Lambda runner (simulates AWS Lambda locally)
+  # ---------------------------------------------------------------------------
+  log-processor:
+    build:
+      context: ./lambda/log_consumer
+      dockerfile: Dockerfile
+    container_name: log-processor
+    networks:
+      - log-analytics
+    depends_on:
+      kafka:
+        condition: service_healthy
+      opensearch:
+        condition: service_healthy
+    environment:
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9093
+      - OPENSEARCH_ENDPOINT=http://opensearch:9200
+      - KAFKA_TOPIC_PREFIX=logs
+      - AWS_DEFAULT_REGION=us-east-1
+      - CONSUMER_GROUP=log-analytics-consumer
+      - BATCH_SIZE=100
+      - POLL_TIMEOUT_MS=1000
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # SAMPLE MICROSERVICES - Generate realistic logs
+  # ---------------------------------------------------------------------------
+  user-service:
+    build:
+      context: ./sample-apps/user-service
+      dockerfile: Dockerfile
+    container_name: user-service
+    networks:
+      - log-analytics
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      - SERVICE_NAME=user-service
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9093
+      - LOG_RATE=10        # logs per second
+      - ERROR_RATE=0.05    # 5% error rate
+    restart: unless-stopped
+
+  payment-service:
+    build:
+      context: ./sample-apps/payment-service
+      dockerfile: Dockerfile
+    container_name: payment-service
+    networks:
+      - log-analytics
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      - SERVICE_NAME=payment-service
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9093
+      - LOG_RATE=5
+      - ERROR_RATE=0.02    # 2% error rate (critical service, low errors)
+    restart: unless-stopped
+
+  order-service:
+    build:
+      context: ./sample-apps/order-service
+      dockerfile: Dockerfile
+    container_name: order-service
+    networks:
+      - log-analytics
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      - SERVICE_NAME=order-service
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9093
+      - LOG_RATE=8
+      - ERROR_RATE=0.04
+    restart: unless-stopped
+
+  notification-service:
+    build:
+      context: ./sample-apps/notification-service
+      dockerfile: Dockerfile
+    container_name: notification-service
+    networks:
+      - log-analytics
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      - SERVICE_NAME=notification-service
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9093
+      - LOG_RATE=15
+      - ERROR_RATE=0.08    # Higher error rate (external email/SMS providers)
+    restart: unless-stopped
